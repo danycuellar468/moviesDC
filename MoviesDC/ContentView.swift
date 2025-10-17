@@ -46,7 +46,7 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
                 } else {
-                    // ✅ Fallback: si SwiftData vacío pero API sí tiene datos → mostrar arrMovies
+                    // Fallback: si SwiftData está vacío pero la API ya tiene datos → muestra arrMovies
                     if localMovies.isEmpty && !movieViewModel.arrMovies.isEmpty {
                         List {
                             ForEach(movieViewModel.arrMovies) { item in
@@ -57,9 +57,7 @@ struct ContentView: View {
                                 }
                             }
                         }
-                    }
-                    // ✅ Normal: mostrar los datos guardados en SwiftData
-                    else {
+                    } else {
                         if localMovies.isEmpty {
                             ContentUnavailableView(
                                 "Sin películas",
@@ -90,14 +88,23 @@ struct ContentView: View {
                                         }
                                         .tint(.blue)
 
+                                        // DELETE: API (opcional) + local
                                         Button(role: .destructive) {
-                                            delete(item)
+                                            Task {
+                                                do {
+                                                    // Si no quieres borrar en API, comenta la línea de abajo y deja delete(item)
+                                                    try await movieViewModel.deleteMovieAPI(identifier: item.name)
+                                                    delete(item) // siempre borra local
+                                                } catch {
+                                                    movieViewModel.errorMessage = "No se pudo borrar en la API."
+                                                }
+                                            }
                                         } label: {
                                             Text("Borrar")
                                         }
                                     }
                                 }
-                                .onDelete(perform: deleteOffsets)
+                                .onDelete(perform: deleteOffsets) // gesto nativo de borrar
                             }
                         }
                     }
@@ -122,7 +129,7 @@ struct ContentView: View {
                     .accessibilityLabel("Agregar película")
                 }
             }
-            // ✅ Import automático al terminar la carga (una sola vez)
+            // Import automático al terminar la carga (una sola vez)
             .onChange(of: movieViewModel.isLoading) { _, isLoading in
                 if !isLoading,
                    movieViewModel.errorMessage == nil,
@@ -132,23 +139,48 @@ struct ContentView: View {
                     didAutoImport = true
                 }
             }
-            // Formulario Crear/Editar
+            // Formulario Crear/Editar → llama a la API y sincroniza SwiftData
             .sheet(isPresented: $showForm) {
                 MovieFormView(movieToEdit: movieToEdit) { name, imageName, desc in
-                    if let m = movieToEdit {
-                        m.name = name
-                        m.imageName = imageName
-                        m.details = desc
-                    } else {
-                        let m = MovieSD(name: name, imageName: imageName, details: desc)
-                        context.insert(m)
+                    Task {
+                        do {
+                            if let m = movieToEdit {
+                                // UPDATE en API
+                                _ = try await movieViewModel.updateMovieAPI(
+                                    originalName: m.name,
+                                    name: name,
+                                    imageName: imageName,
+                                    description: desc
+                                )
+                                // sincroniza local
+                                m.name = name
+                                m.imageName = imageName
+                                m.details = desc
+                                try? context.save()
+                            } else {
+                                // CREATE en API
+                                let created = try await movieViewModel.createMovieAPI(
+                                    name: name,
+                                    imageName: imageName,
+                                    description: desc
+                                )
+                                // inserta espejo local
+                                let local = MovieSD(name: created.name,
+                                                    imageName: created.imageName,
+                                                    details: created.description)
+                                context.insert(local)
+                                try? context.save()
+                            }
+                        } catch {
+                            movieViewModel.errorMessage = "No se pudo guardar en la API."
+                        }
                     }
-                    try? context.save()
                 }
             }
         }
     }
 
+    // -------- Helpers local (SwiftData) --------
     private func delete(_ m: MovieSD) {
         context.delete(m)
         try? context.save()

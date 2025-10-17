@@ -10,82 +10,123 @@ import Observation
 
 @MainActor
 @Observable
-
 class MovieViewModel {
-    //Data
+    // Data
     var arrMovies = [Movie]()
-    
-    var isLoading: Bool = false //show loading indicator
-    var errorMessage: String? = nil //store error messages
-    
-    
+    var isLoading: Bool = false
+    var errorMessage: String? = nil
+
     init(){
-        //clean code - no dead code, we call only what we use
-        //automatically load movies when ViewModel is created
-        Task{
-            try await loadAPI()
-        }
-        
+        Task { try await loadAPI() }
     }
-    
-    // Loads the movies from my API
-    //Show UI frendly error messages
+
+    // -------- READ --------
     func loadAPI() async throws {
         isLoading = true
         errorMessage = nil
-        defer {isLoading = false} //always stop loading at the end
-        
-        guard let url = URL(string: "https://movies-api-wgms.onrender.com/movies") else {
+        defer { isLoading = false }
+
+        guard let url = URL(string: "\(baseURL)/movies") else {
             errorMessage = "Invalid URL"
             return
         }
-        
-        do{
-            //create the request with a timeout
+
+        do {
             var urlRequest = URLRequest(url: url)
             urlRequest.timeoutInterval = 20
-            
-            //perform request
             let (data, response) = try await URLSession.shared.data(for: urlRequest)
-            
-            //validate http response
             guard let code = (response  as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else{
                 errorMessage = "Unknown answer for the server"
                 return
             }
-            //decode json into movie array
             let results = try JSONDecoder().decode([Movie].self, from: data)
             self.arrMovies = results
-            
-        } catch let urlErr as URLError{
-            //clean code - friendly messages with no crashes
-            //handle common errors
-            switch urlErr.code{
+
+        } catch let urlErr as URLError {
+            switch urlErr.code {
             case .notConnectedToInternet:
                 errorMessage = "It seems like you are not connected to the internet."
-            case.timedOut:
+            case .timedOut:
                 errorMessage = "The request timed out."
-            case.cannotFindHost, .cannotConnectToHost:
+            case .cannotFindHost, .cannotConnectToHost:
                 errorMessage = "The server could not be reached."
             default:
                 errorMessage = "An unknown error occurred."
             }
-        }catch is DecodingError{
+        } catch is DecodingError {
             errorMessage = "Couldn't read the data from the API."
             print("Decoding error")
-        }catch {
-            //for any other unexpected error
+        } catch {
             errorMessage = "Something went wrong."
         }
-        
     }
 
-    //retry button to reload the API
     func retry(){
-        Task{
-            try await loadAPI()
-        }
+        Task { try await loadAPI() }
     }
 }
 
+// MARK: - API Create/Update/Delete
+extension MovieViewModel {
+    // Cambia esto si tu dominio/base es otro
+    fileprivate var baseURL: String { "https://movies-api-wgms.onrender.com" }
 
+    private struct APIMoviePayload: Codable {
+        let name: String
+        let imageName: String
+        let description: String
+    }
+
+    // CREATE → POST /movies
+    @discardableResult
+    func createMovieAPI(name: String, imageName: String, description: String) async throws -> Movie {
+        guard let url = URL(string: "\(baseURL)/movies") else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 20
+        req.httpBody = try JSONEncoder().encode(APIMoviePayload(name: name, imageName: imageName, description: description))
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return (try? JSONDecoder().decode(Movie.self, from: data))
+            ?? Movie(name: name, imageName: imageName, description: description)
+    }
+
+    // UPDATE → PUT /movies/{original_name}
+    @discardableResult
+    func updateMovieAPI(originalName: String, name: String, imageName: String, description: String) async throws -> Movie {
+        let encoded = originalName.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? originalName
+        guard let url = URL(string: "\(baseURL)/movies/\(encoded)") else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "PUT"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 20
+        req.httpBody = try JSONEncoder().encode(APIMoviePayload(name: name, imageName: imageName, description: description))
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else {
+            throw URLError(.badServerResponse)
+        }
+
+        return (try? JSONDecoder().decode(Movie.self, from: data))
+            ?? Movie(name: name, imageName: imageName, description: description)
+    }
+
+    // DELETE (opcional) → DELETE /movies/{name}
+    func deleteMovieAPI(identifier nameOrId: String) async throws {
+        let encoded = nameOrId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? nameOrId
+        guard let url = URL(string: "\(baseURL)/movies/\(encoded)") else { throw URLError(.badURL) }
+        var req = URLRequest(url: url)
+        req.httpMethod = "DELETE"
+        req.timeoutInterval = 20
+
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        guard let code = (resp as? HTTPURLResponse)?.statusCode, (200..<300).contains(code) else {
+            throw URLError(.badServerResponse)
+        }
+    }
+}
