@@ -6,15 +6,27 @@
 //
 
 import SwiftUI
+import SwiftData
 
 @main
 struct MovieDCApp: App {
-    
+    // contenedor de SwiftData
+    private var container: ModelContainer = {
+        do {
+            let cfg = ModelConfiguration(isStoredInMemoryOnly: false)
+            return try ModelContainer(for: MovieSD.self, configurations: cfg)
+        } catch {
+            fatalError("No se pudo crear ModelContainer: \(error)")
+        }
+    }()
+
     var body: some Scene {
-        
         WindowGroup {
-            //launch main view with the movie list
             ContentView()
         }
+        .modelContainer(container)
     }
 }
+
+
+
